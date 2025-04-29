@@ -1,0 +1,138 @@
+import socket
+import pickle
+import numpy as np
+from stable_baselines3 import PPO
+from connect_four_gym import ConnectFourEnv  
+
+# Game Constants
+ROW_COUNT = 6
+COLUMN_COUNT = 7
+HOST = '0.0.0.0'
+PORT = 65432
+
+# Board setup
+board = np.zeros((ROW_COUNT, COLUMN_COUNT), dtype=int)
+
+# Server networking
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket.bind((HOST, PORT))
+server_socket.listen(2)
+
+print(f"Server started on {HOST}:{PORT}")
+
+def send(conn, data):
+    conn.sendall(pickle.dumps(data))
+
+def receive(conn):
+    data = conn.recv(4096)
+    return pickle.loads(data)
+
+def is_valid_location(col):
+    return board[ROW_COUNT-1][col] == 0
+
+def get_next_open_row(col):
+    for r in range(ROW_COUNT):
+        if board[r][col] == 0:
+            return r
+
+def drop_piece(row, col, piece):
+    board[row][col] = piece
+
+def winning_move(piece):
+    for c in range(COLUMN_COUNT-3):
+        for r in range(ROW_COUNT):
+            if all(board[r][c+i] == piece for i in range(4)):
+                return True
+    for c in range(COLUMN_COUNT):
+        for r in range(ROW_COUNT-3):
+            if all(board[r+i][c] == piece for i in range(4)):
+                return True
+    for c in range(COLUMN_COUNT-3):
+        for r in range(ROW_COUNT-3):
+            if all(board[r+i][c+i] == piece for i in range(4)):
+                return True
+    for c in range(COLUMN_COUNT-3):
+        for r in range(3, ROW_COUNT):
+            if all(board[r-i][c+i] == piece for i in range(4)):
+                return True
+    return False
+
+# --- Accept the first client ---
+conn1, addr1 = server_socket.accept()
+print(f"First player connected from {addr1}")
+
+# Ask first client for game mode
+send(conn1, {"ask_mode": True})
+choice = receive(conn1)  # Expect "AI" or "Player"
+
+if choice == "AI":
+    print("Starting AI mode...")
+
+    env = ConnectFourEnv()
+    model = PPO.load("connect_four_model_iteration_9")
+    obs = env.reset()
+
+    turn = 0  # 0 = human (client), 1 = AI
+    done = False
+
+    send(conn1, {"board": env.board, "turn": turn})
+
+    while not done:
+        if turn == 0:
+            move = receive(conn1)
+            if env.is_valid_location(move):
+                obs, reward, done, info = env.step(move)
+                if env.winning_move(PLAYER_PIECE):
+                    send(conn1, {"board": env.board, "winner": 1})
+                    break
+                turn = 1
+                send(conn1, {"board": env.board, "turn": turn})
+            else:
+                send(conn1, {"error": "Invalid move"})
+        else:
+            action, _states = model.predict(obs)
+            obs, reward, done, info = env.step(int(action))
+            if env.winning_move(AI_PIECE):
+                send(conn1, {"board": env.board, "winner": 2})
+                break
+            turn = 0
+            send(conn1, {"board": env.board, "turn": turn})
+
+    conn1.close()
+
+elif choice == "Player":
+    print("Starting 2-Player mode...")
+    conn2, addr2 = server_socket.accept()
+    print(f"Second player connected from {addr2}")
+
+    connections = [conn1, conn2]
+    turn = 0  # 0 for Player 1, 1 for Player 2
+    game_over = False
+
+    # Send initial board to both players
+    for conn in connections:
+        send(conn, {"board": board, "turn": turn})
+
+    while not game_over:
+        conn = connections[turn]
+        move = receive(conn)
+
+        if is_valid_location(move):
+            row = get_next_open_row(move)
+            drop_piece(row, move, 1 if turn == 0 else 2)
+
+            if winning_move(1 if turn == 0 else 2):
+                for conn in connections:
+                    send(conn, {"board": board, "winner": turn+1})
+                break
+            else:
+                turn = (turn + 1) % 2
+                for conn in connections:
+                    send(conn, {"board": board, "turn": turn, "board": board})
+        else:
+            send(conn, {"error": "Invalid move"})
+
+    conn1.close()
+    conn2.close()
+
+server_socket.close()
