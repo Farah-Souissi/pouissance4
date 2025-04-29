@@ -1,0 +1,63 @@
+import os
+import matplotlib.pyplot as plt
+from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv
+import numpy as np
+from gymnasium import spaces
+import gymnasium as gym
+from connect_four_gym import ConnectFourEnv
+import inspect
+print(inspect.getfile(ConnectFourEnv))
+
+log_dir = "./logs/"
+os.makedirs(log_dir, exist_ok=True)
+class RewardLoggerCallback(BaseCallback):
+    def __init__(self, check_freq: int, log_dir: str, verbose=1):
+        super().__init__(verbose)
+        self.check_freq = check_freq
+        self.log_dir = log_dir
+        self.episode_rewards = []
+
+    def _on_step(self) -> bool:
+        if self.locals.get("dones") is not None and any(self.locals["dones"]):
+            ep_info = self.locals.get("infos")
+            for info in ep_info:
+                if "episode" in info:
+                    self.episode_rewards.append(info["episode"]["r"])
+        return True
+
+    def save_graph(self, iteration):
+        if self.episode_rewards:
+            plt.figure(figsize=(10, 5))
+            plt.plot(self.episode_rewards)
+            plt.xlabel("Episode")
+            plt.ylabel("Reward")
+            plt.title(f"Episode Rewards - Iteration {iteration}")
+            plt.grid()
+            plt.savefig(os.path.join(self.log_dir, f"rewards_plot_iter_{iteration}.png"))
+            plt.close()
+
+# Setup logging directory
+log_dir = "./logs/"
+os.makedirs(log_dir, exist_ok=True)
+
+# Wrap your Connect Four environment properly
+# Assuming 'env' is defined earlier as your custom ConnectFour environment
+# Replace 'ConnectFourEnv()' with your actual environment instance
+from connect_four_gym import ConnectFourEnv  # Example import
+env = DummyVecEnv([lambda: Monitor(ConnectFourEnv(), log_dir)])
+
+model = PPO("MlpPolicy", env, verbose=1, tensorboard_log="./tensorboard/")
+
+# Training loop with logging and saving
+callback = RewardLoggerCallback(check_freq=1000, log_dir=log_dir)
+
+for i in range(10):
+    model.learn(total_timesteps=10000, callback=callback)
+    model.save(f"connect_four_model_iteration_{i}")
+    callback.save_graph(i)
+    callback.episode_rewards = []  # Reset for next iteration
+
+print(ConnectFourEnv.__mro__)
