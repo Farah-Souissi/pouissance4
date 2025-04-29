@@ -1,0 +1,117 @@
+import tkinter as tk
+import socket
+import threading
+import pickle
+import numpy as np
+import random
+from connect_four_env import ConnectFourEnv  
+
+SERVER_IP = '127.0.0.1'  
+SERVER_PORT = 12345
+
+# Global for Tkinter window
+window = None
+
+def start_interface():
+    global window
+    window = tk.Tk()
+    window.title("Connect Four: Choose Mode")
+
+    label = tk.Label(window, text="Choose a mode to play:", font=("Arial", 20))
+    label.pack(pady=20)
+
+    ai_button = tk.Button(window, text="Play vs AI", font=("Arial", 16), command=start_vs_ai)
+    ai_button.pack(pady=10)
+
+    online_button = tk.Button(window, text="Play Online (2 Players)", font=("Arial", 16), command=start_vs_player)
+    online_button.pack(pady=10)
+
+    exit_button = tk.Button(window, text="Exit", font=("Arial", 16), command=window.destroy)
+    exit_button.pack(pady=10)
+
+    window.mainloop()
+
+# --- AI Game ---
+def start_vs_ai():
+    window.destroy()
+    env = ConnectFourEnv()
+    env.reset()
+    done = False
+    current_player = 1  # Player
+
+    while not done:
+        env.render()
+        if current_player == 1:
+            try:
+                action = int(input("Your Move (0-6): "))
+                if action not in range(7) or not env.is_valid_location(action):
+                    print("Invalid move. Try again.")
+                    continue
+            except ValueError:
+                print("Invalid input! Please enter a number between 0 and 6.")
+                continue
+            _, reward, done, _ = env.step(action)
+        else:
+            # Random AI move
+            valid_moves = [c for c in range(7) if env.is_valid_location(c)]
+            action = random.choice(valid_moves)
+            print(f"AI Move: {action}")
+            _, reward, done, _ = env.step(action)
+
+        current_player = 1 if current_player == 2 else 2
+
+    env.render()
+    if reward == 1:
+        print("Game Over! Winner!")
+    else:
+        print("Game Over! Draw or Invalid move!")
+
+# --- Online Game ---
+def start_vs_player():
+    window.destroy()
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        client_socket.connect((SERVER_IP, SERVER_PORT))
+        print("Connected to server!")
+    except Exception as e:
+        print(f"Failed to connect to server: {e}")
+        return
+
+    threading.Thread(target=handle_server, args=(client_socket,), daemon=True).start()
+
+    while True:
+        try:
+            move = input("Enter your move (0-6): ")
+            if not move.isdigit():
+                print("Please enter a number between 0 and 6.")
+                continue
+
+            move = int(move)
+            if move not in range(7):
+                print("Invalid move. Column must be between 0 and 6.")
+                continue
+
+            client_socket.send(pickle.dumps(move))
+        except Exception as e:
+            print(f"Error sending move: {e}")
+            break
+
+def handle_server(sock):
+    while True:
+        try:
+            data = sock.recv(4096)
+            if not data:
+                print("Server closed connection.")
+                break
+            board = pickle.loads(data)
+            render_board(board)
+        except Exception as e:
+            print(f"Error receiving data: {e}")
+            break
+
+def render_board(board):
+    print("\nCurrent Board:")
+    print(np.flip(board, 0))
+
+if __name__ == "__main__":
+    start_interface()
