@@ -1,0 +1,83 @@
+import pygame
+import sys
+import math
+import numpy as np
+from stable_baselines3 import PPO
+from connect_four_gym import ConnectFourEnv  
+
+# Load the trained model
+model = PPO.load("connect_four_model_iteration_9") 
+
+# Game constants 
+ROW_COUNT = 6
+COLUMN_COUNT = 7
+SQUARESIZE = 100
+RADIUS = int(SQUARESIZE / 2 - 5)
+
+# Pygame setup
+pygame.init()
+width = COLUMN_COUNT * SQUARESIZE
+height = (ROW_COUNT + 1) * SQUARESIZE
+size = (width, height)
+screen = pygame.display.set_mode(size)
+pygame.display.set_caption("Connect Four: Human vs AI")
+myfont = pygame.font.SysFont("monospace", 75)
+
+env = ConnectFourEnv()
+obs = env.reset()
+
+def draw_board(board):
+    for c in range(COLUMN_COUNT):
+        for r in range(ROW_COUNT):
+            pygame.draw.rect(screen, (0,0,255), (c*SQUARESIZE, r*SQUARESIZE+SQUARESIZE, SQUARESIZE, SQUARESIZE))
+            color = (0,0,0)
+            if board[r][c] == 1:
+                color = (255,0,0)
+            elif board[r][c] == 2:
+                color = (255,255,0)
+            pygame.draw.circle(screen, color, (int(c*SQUARESIZE+SQUARESIZE/2), height - int(r*SQUARESIZE+SQUARESIZE/2)), RADIUS)
+    pygame.display.update()
+
+done = False
+game_over = False
+turn = 0  # 0 = Human, 1 = AI
+
+draw_board(env.board)
+
+while not game_over:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            pygame.quit()
+            sys.exit()
+
+        if event.type == pygame.MOUSEMOTION and turn == 0:
+            pygame.draw.rect(screen, (0,0,0), (0,0, width, SQUARESIZE))
+            posx = event.pos[0]
+            pygame.draw.circle(screen, (255,0,0), (posx, int(SQUARESIZE/2)), RADIUS)
+
+        pygame.display.update()
+
+        if event.type == pygame.MOUSEBUTTONDOWN and turn == 0:
+            posx = event.pos[0]
+            col = int(math.floor(posx/SQUARESIZE))
+            if env.is_valid_location(col):
+                obs, reward, done, info = env.step(col)
+                turn = 1
+                draw_board(env.board)
+                if done:
+                    label = myfont.render("You Win!" if reward == 1 else "Draw!", 1, (255,0,0))
+                    screen.blit(label, (40,10))
+                    game_over = True
+
+    if turn == 1 and not done:
+        action, _states = model.predict(obs)
+        obs, reward, done, info = env.step(int(action))
+        turn = 0
+        draw_board(env.board)
+        if done:
+            label = myfont.render("AI Wins!" if reward == -1 else "Draw!", 1, (255,255,0))
+            screen.blit(label, (40,10))
+            game_over = True
+
+    if game_over:
+        pygame.time.wait(3000)
